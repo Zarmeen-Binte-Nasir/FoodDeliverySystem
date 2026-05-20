@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../data/dummy_data.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../data/dummy_data.dart' as dummy; // Keep for fallback or types if needed
 import '../../screens/login_screen.dart';
 
 // ── Design Tokens ─────────────────────────────────────────────────────────────
@@ -74,34 +75,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
   int _selectedIndex = 0;
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
-
-  int get _totalRestaurants => restaurants.length;
-  int get _totalMenuItems => menuItems.length;
-
-  double get _avgRating {
-    if (restaurants.isEmpty) return 0;
-    final sum = restaurants.fold<double>(
-        0, (s, r) => s + ((r['rating'] ?? 0.0) as num).toDouble());
-    return sum / restaurants.length;
-  }
-
-  List<Map<String, dynamic>> get _popularItems =>
-      menuItems.where((i) => i['isPopular'] == true).toList();
-
-  Map<String, int> get _categoryBreakdown {
-    final map = <String, int>{};
-    for (final r in restaurants) {
-      final cat = r['category'] as String;
-      map[cat] = (map[cat] ?? 0) + 1;
-    }
-    return map;
-  }
-
-  List<MapEntry<String, int>> get _topCategories {
-    final sorted = _categoryBreakdown.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return sorted.take(5).toList();
-  }
 
   @override
   void initState() {
@@ -308,26 +281,13 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
   Widget _buildBody() {
     switch (_selectedIndex) {
       case 0:
-        return _DashboardTab(
-          totalRestaurants: _totalRestaurants,
-          totalMenuItems: _totalMenuItems,
-          avgRating: _avgRating,
-          popularCount: _popularItems.length,
-          topCategories: _topCategories,
-          restaurants: restaurants,
-          onLogout: _confirmLogout,
-        );
+        return _DashboardTab(onLogout: _confirmLogout);
       case 1:
-        return _RestaurantsTab(restaurants: restaurants);
+        return const _RestaurantsTab();
       case 2:
         return const _OrdersTab();
       case 3:
-        return _AnalyticsTab(
-          categoryBreakdown: _categoryBreakdown,
-          totalRestaurants: _totalRestaurants,
-          totalMenuItems: _totalMenuItems,
-          avgRating: _avgRating,
-        );
+        return const _AnalyticsTab();
       default:
         return const SizedBox();
     }
@@ -605,110 +565,130 @@ class _MobileLogoutButton extends StatelessWidget {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// DASHBOARD TAB  ── fully redesigned
+// DASHBOARD TAB  ── with Firebase Backend
 // ═════════════════════════════════════════════════════════════════════════════
 
 class _DashboardTab extends StatelessWidget {
-  final int totalRestaurants;
-  final int totalMenuItems;
-  final double avgRating;
-  final int popularCount;
-  final List<MapEntry<String, int>> topCategories;
-  final List<Map<String, dynamic>> restaurants;
   final VoidCallback? onLogout;
 
-  const _DashboardTab({
-    required this.totalRestaurants,
-    required this.totalMenuItems,
-    required this.avgRating,
-    required this.popularCount,
-    required this.topCategories,
-    required this.restaurants,
-    this.onLogout,
-  });
+  const _DashboardTab({this.onLogout});
 
   @override
   Widget build(BuildContext context) {
-    return CustomScrollView(
-      slivers: [
-        // ── Sticky header
-        SliverToBoxAdapter(
-          child: _PageHeader(
-            title: 'Dashboard',
-            subtitle: 'Welcome back, Admin 👋',
-            onLogout: onLogout,
-            trailing: _OrangeBadgeIcon(
-              icon: Icons.local_fire_department_rounded,
-              size: 42,
-            ),
-          ),
-        ),
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('restaurants').snapshots(),
+      builder: (context, restSnap) {
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance.collection('orders').snapshots(),
+          builder: (context, orderSnap) {
+            return StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance.collection('menu_items').snapshots(),
+              builder: (context, menuSnap) {
+                if (restSnap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-        // ── Hero stats row
-        SliverToBoxAdapter(child: _buildHeroStats()),
+                final restaurantsList = restSnap.data?.docs.map((doc) => doc.data() as Map<String, dynamic>).toList() ?? [];
+                final ordersList = orderSnap.data?.docs.map((doc) => doc.data() as Map<String, dynamic>).toList() ?? [];
+                final menuItemsList = menuSnap.data?.docs.map((doc) => doc.data() as Map<String, dynamic>).toList() ?? [];
 
-        // ── Revenue & Activity cards
-        SliverToBoxAdapter(child: _buildHighlightRow()),
+                // Stats calculation
+                final totalRestaurants = restaurantsList.length;
+                final totalOrders = ordersList.length;
+                final totalMenuItems = menuItemsList.length;
+                
+                double avgRating = 0;
+                if (restaurantsList.isNotEmpty) {
+                  final sum = restaurantsList.fold<double>(0, (s, r) => s + ((r['rating'] ?? 0.0) as num).toDouble());
+                  avgRating = sum / restaurantsList.length;
+                }
 
-        // ── Category breakdown
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 28, 16, 14),
-            child: Text('Category Breakdown', style: _h2),
-          ),
-        ),
-        SliverToBoxAdapter(child: _buildCategoryBreakdown()),
+                final popularCount = menuItemsList.where((i) => i['isPopular'] == true).length;
 
-        // ── Recent restaurants
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 28, 16, 14),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Recent Restaurants', style: _h2),
-                Text('${restaurants.length} total',
-                    style: _caption.copyWith(color: kPrimary)),
-              ],
-            ),
-          ),
-        ),
-        SliverList(
-          delegate: SliverChildBuilderDelegate(
-                (context, i) => Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-              child: _RestaurantCard(r: restaurants[i]),
-            ),
-            childCount: restaurants.take(5).length,
-          ),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 32)),
-      ],
+                // Category breakdown
+                final catMap = <String, int>{};
+                for (final r in restaurantsList) {
+                  final cat = (r['category'] ?? 'Other') as String;
+                  catMap[cat] = (catMap[cat] ?? 0) + 1;
+                }
+                final topCategories = catMap.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+
+                return CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: _PageHeader(
+                        title: 'Dashboard',
+                        subtitle: 'Welcome back, Admin 👋',
+                        onLogout: onLogout,
+                        trailing: const _OrangeBadgeIcon(
+                          icon: Icons.local_fire_department_rounded,
+                          size: 42,
+                        ),
+                      ),
+                    ),
+                    SliverToBoxAdapter(child: _buildHeroStats(totalRestaurants, totalOrders, avgRating, popularCount)),
+                    SliverToBoxAdapter(child: _buildHighlightRow(totalMenuItems)),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 28, 16, 14),
+                        child: Text('Category Breakdown', style: _h2),
+                      ),
+                    ),
+                    SliverToBoxAdapter(child: _buildCategoryBreakdown(topCategories.take(5).toList())),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 28, 16, 14),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Recent Restaurants', style: _h2),
+                            Text('$totalRestaurants total', style: _caption.copyWith(color: kPrimary)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, i) => Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                          child: _RestaurantCard(r: restaurantsList[i]),
+                        ),
+                        childCount: restaurantsList.take(5).length,
+                      ),
+                    ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 
-  Widget _buildHeroStats() {
+  Widget _buildHeroStats(int totalRestaurants, int totalOrders, double avgRating, int popularCount) {
     final stats = [
       _StatData(
         icon: Icons.storefront_rounded,
         value: '$totalRestaurants',
         label: 'Restaurants',
         color: kPrimary,
-        trend: '+2 this week',
+        trend: 'Live',
       ),
       _StatData(
         icon: Icons.receipt_long_rounded,
-        value: '120',
+        value: '$totalOrders',
         label: 'Total Orders',
         color: kBlue,
-        trend: '+18 today',
+        trend: 'Realtime',
       ),
       _StatData(
         icon: Icons.star_rounded,
         value: avgRating.toStringAsFixed(1),
         label: 'Avg Rating',
         color: kAmber,
-        trend: '▲ 0.2',
+        trend: 'Community',
       ),
       _StatData(
         icon: Icons.local_fire_department_rounded,
@@ -733,7 +713,7 @@ class _DashboardTab extends StatelessWidget {
     );
   }
 
-  Widget _buildHighlightRow() {
+  Widget _buildHighlightRow(int totalMenuItems) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
       child: Row(
@@ -746,7 +726,7 @@ class _DashboardTab extends StatelessWidget {
     );
   }
 
-  Widget _buildCategoryBreakdown() {
+  Widget _buildCategoryBreakdown(List<MapEntry<String, int>> topCategories) {
     final maxVal = topCategories.isEmpty ? 1 : topCategories.first.value;
     final barColors = [kPrimary, kBlue, kAmber, kGreen, kPurple];
 
@@ -770,8 +750,7 @@ class _DashboardTab extends StatelessWidget {
                   Container(
                     width: 8,
                     height: 8,
-                    decoration:
-                    BoxDecoration(color: color, shape: BoxShape.circle),
+                    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
                   ),
                   const SizedBox(width: 10),
                   SizedBox(
@@ -962,12 +941,11 @@ class _ActivityCard extends StatelessWidget {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RESTAURANTS TAB
+// RESTAURANTS TAB  ── with Firebase Backend
 // ═════════════════════════════════════════════════════════════════════════════
 
 class _RestaurantsTab extends StatefulWidget {
-  final List<Map<String, dynamic>> restaurants;
-  const _RestaurantsTab({required this.restaurants});
+  const _RestaurantsTab();
 
   @override
   State<_RestaurantsTab> createState() => _RestaurantsTabState();
@@ -976,17 +954,7 @@ class _RestaurantsTab extends StatefulWidget {
 class _RestaurantsTabState extends State<_RestaurantsTab> {
   String _search = '';
 
-  List<Map<String, dynamic>> get _filtered => restaurants
-      .where((r) =>
-  (r['name'] as String)
-      .toLowerCase()
-      .contains(_search.toLowerCase()) ||
-      (r['category'] as String)
-          .toLowerCase()
-          .contains(_search.toLowerCase()))
-      .toList();
-
-  void _deleteRestaurant(Map<String, dynamic> r) {
+  void _deleteRestaurant(Map<String, dynamic> r, String docId) {
     showDialog(
       context: context,
       builder: (_) => Dialog(
@@ -1027,16 +995,18 @@ class _RestaurantsTabState extends State<_RestaurantsTab> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: () {
-                        setState(() => restaurants.remove(r));
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          content: Text('${r['name']} removed'),
-                          backgroundColor: kRed,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ));
+                      onPressed: () async {
+                        await FirebaseFirestore.instance.collection('restaurants').doc(docId).delete();
+                        if (mounted) {
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('${r['name']} removed'),
+                            backgroundColor: kRed,
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ));
+                        }
                       },
                       style: ElevatedButton.styleFrom(
                           backgroundColor: kRed,
@@ -1065,15 +1035,16 @@ class _RestaurantsTabState extends State<_RestaurantsTab> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _AddRestaurantSheet(
-        onAdd: (newRestaurant) {
-          setState(() => restaurants.add(newRestaurant));
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('${newRestaurant['name']} added!'),
-            backgroundColor: kGreen,
-            behavior: SnackBarBehavior.floating,
-            shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ));
+        onAdd: (newRestaurant) async {
+          await FirebaseFirestore.instance.collection('restaurants').add(newRestaurant);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('${newRestaurant['name']} added!'),
+              backgroundColor: kGreen,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ));
+          }
         },
       ),
     );
@@ -1085,30 +1056,54 @@ class _RestaurantsTabState extends State<_RestaurantsTab> {
       backgroundColor: kBg,
       body: Column(
         children: [
-          _PageHeader(
-              title: 'Restaurants',
-              subtitle: '${restaurants.length} listed on platform'),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: _SearchBar(
-              hint: 'Search by name or category…',
-              onChanged: (v) => setState(() => _search = v),
-            ),
-          ),
-          Expanded(
-            child: _filtered.isEmpty
-                ? const _EmptyState(message: 'No restaurants found')
-                : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-              itemCount: _filtered.length,
-              itemBuilder: (_, i) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _RestaurantCard(
-                  r: _filtered[i],
-                  onDelete: () => _deleteRestaurant(_filtered[i]),
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('restaurants').snapshots(),
+            builder: (context, snapshot) {
+              final restaurantsList = snapshot.data?.docs ?? [];
+              final filtered = restaurantsList.where((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                return (data['name'] as String).toLowerCase().contains(_search.toLowerCase()) ||
+                       (data['category'] as String).toLowerCase().contains(_search.toLowerCase());
+              }).toList();
+
+              return Expanded(
+                child: Column(
+                  children: [
+                    _PageHeader(
+                        title: 'Restaurants',
+                        subtitle: '${restaurantsList.length} listed on platform'),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      child: _SearchBar(
+                        hint: 'Search by name or category…',
+                        onChanged: (v) => setState(() => _search = v),
+                      ),
+                    ),
+                    Expanded(
+                      child: snapshot.connectionState == ConnectionState.waiting
+                          ? const Center(child: CircularProgressIndicator())
+                          : filtered.isEmpty
+                              ? const _EmptyState(message: 'No restaurants found')
+                              : ListView.builder(
+                                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                                  itemCount: filtered.length,
+                                  itemBuilder: (_, i) {
+                                    final doc = filtered[i];
+                                    final r = doc.data() as Map<String, dynamic>;
+                                    return Padding(
+                                      padding: const EdgeInsets.only(bottom: 10),
+                                      child: _RestaurantCard(
+                                        r: r,
+                                        onDelete: () => _deleteRestaurant(r, doc.id),
+                                      ),
+                                    );
+                                  },
+                                ),
+                    ),
+                  ],
                 ),
-              ),
-            ),
+              );
+            }
           ),
         ],
       ),
@@ -1125,7 +1120,7 @@ class _RestaurantsTabState extends State<_RestaurantsTab> {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ORDERS TAB
+// ORDERS TAB  ── with Firebase Backend
 // ═════════════════════════════════════════════════════════════════════════════
 
 class _OrdersTab extends StatefulWidget {
@@ -1146,11 +1141,6 @@ class _OrdersTabState extends State<_OrdersTab> {
     'Delivered',
     'Cancelled'
   ];
-
-  List<Map<String, dynamic>> get _filtered {
-    if (_selectedStatus == 'All') return orders;
-    return orders.where((o) => o['status'] == _selectedStatus).toList();
-  }
 
   Color _statusColor(String status) {
     switch (status) {
@@ -1186,7 +1176,7 @@ class _OrdersTabState extends State<_OrdersTab> {
     }
   }
 
-  void _showOrderDetail(Map<String, dynamic> order) {
+  void _showOrderDetail(Map<String, dynamic> order, String docId) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1195,8 +1185,8 @@ class _OrdersTabState extends State<_OrdersTab> {
         order: order,
         statusColor: _statusColor,
         statusIcon: _statusIcon,
-        onStatusChanged: (newStatus) {
-          setState(() => order['status'] = newStatus);
+        onStatusChanged: (newStatus) async {
+          await FirebaseFirestore.instance.collection('orders').doc(docId).update({'status': newStatus});
         },
       ),
     );
@@ -1204,72 +1194,85 @@ class _OrdersTabState extends State<_OrdersTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _PageHeader(
-          title: 'Orders',
-          subtitle:
-          '${orders.length} total · ${orders.where((o) => o['status'] == 'Pending').length} pending',
-        ),
-        SizedBox(
-          height: 56,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            itemCount: _statuses.length,
-            itemBuilder: (_, i) {
-              final s = _statuses[i];
-              final isActive = _selectedStatus == s;
-              final color = s == 'All' ? kText : _statusColor(s);
-              return GestureDetector(
-                onTap: () => setState(() => _selectedStatus = s),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  margin: const EdgeInsets.only(right: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: isActive ? color : kSurface,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: isActive ? color : kBorder),
-                  ),
-                  child: Text(s,
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: isActive ? Colors.white : kTextSub)),
-                ),
-              );
-            },
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-                '${_filtered.length} order${_filtered.length != 1 ? 's' : ''}',
-                style: _caption),
-          ),
-        ),
-        Expanded(
-          child: _filtered.isEmpty
-              ? _EmptyState(message: 'No $_selectedStatus orders')
-              : ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-            itemCount: _filtered.length,
-            itemBuilder: (_, i) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _OrderCard(
-                order: _filtered[i],
-                statusColor: _statusColor,
-                statusIcon: _statusIcon,
-                onTap: () => _showOrderDetail(_filtered[i]),
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('orders').snapshots(),
+      builder: (context, snapshot) {
+        final allOrders = snapshot.data?.docs ?? [];
+        final filtered = _selectedStatus == 'All' 
+            ? allOrders 
+            : allOrders.where((doc) => (doc.data() as Map<String, dynamic>)['status'] == _selectedStatus).toList();
+
+        return Column(
+          children: [
+            _PageHeader(
+              title: 'Orders',
+              subtitle: '${allOrders.length} total · ${allOrders.where((doc) => (doc.data() as Map<String, dynamic>)['status'] == 'Pending').length} pending',
+            ),
+            SizedBox(
+              height: 56,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                itemCount: _statuses.length,
+                itemBuilder: (_, i) {
+                  final s = _statuses[i];
+                  final isActive = _selectedStatus == s;
+                  final color = s == 'All' ? kText : _statusColor(s);
+                  return GestureDetector(
+                    onTap: () => setState(() => _selectedStatus = s),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: isActive ? color : kSurface,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: isActive ? color : kBorder),
+                      ),
+                      child: Text(s,
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: isActive ? Colors.white : kTextSub)),
+                    ),
+                  );
+                },
               ),
             ),
-          ),
-        ),
-      ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('${filtered.length} order${filtered.length != 1 ? 's' : ''}', style: _caption),
+              ),
+            ),
+            Expanded(
+              child: snapshot.connectionState == ConnectionState.waiting
+                  ? const Center(child: CircularProgressIndicator())
+                  : filtered.isEmpty
+                      ? _EmptyState(message: 'No $_selectedStatus orders')
+                      : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                          itemCount: filtered.length,
+                          itemBuilder: (_, i) {
+                            final doc = filtered[i];
+                            final order = doc.data() as Map<String, dynamic>;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: _OrderCard(
+                                order: order,
+                                statusColor: _statusColor,
+                                statusIcon: _statusIcon,
+                                onTap: () => _showOrderDetail(order, doc.id),
+                              ),
+                            );
+                          },
+                        ),
+            ),
+          ],
+        );
+      }
     );
   }
 }
@@ -1664,127 +1667,147 @@ class _DetailRow extends StatelessWidget {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ANALYTICS TAB
+// ANALYTICS TAB  ── with Firebase Backend
 // ═════════════════════════════════════════════════════════════════════════════
 
 class _AnalyticsTab extends StatelessWidget {
-  final Map<String, int> categoryBreakdown;
-  final int totalRestaurants;
-  final int totalMenuItems;
-  final double avgRating;
-
-  const _AnalyticsTab({
-    required this.categoryBreakdown,
-    required this.totalRestaurants,
-    required this.totalMenuItems,
-    required this.avgRating,
-  });
+  const _AnalyticsTab();
 
   @override
   Widget build(BuildContext context) {
-    final sorted = categoryBreakdown.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    final maxVal = sorted.isEmpty ? 1 : sorted.first.value;
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('restaurants').snapshots(),
+      builder: (context, restSnap) {
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance.collection('menu_items').snapshots(),
+          builder: (context, menuSnap) {
+            if (restSnap.connectionState == ConnectionState.waiting || menuSnap.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-    final colors = [
-      kPrimary, kBlue, kAmber, kRed, kGreen, kPurple,
-      const Color(0xFF06B6D4), const Color(0xFFF97316),
-    ];
+            final restaurantsList = restSnap.data?.docs.map((doc) => doc.data() as Map<String, dynamic>).toList() ?? [];
+            final menuItemsList = menuSnap.data?.docs.map((doc) => doc.data() as Map<String, dynamic>).toList() ?? [];
 
-    return CustomScrollView(
-      slivers: [
-        SliverToBoxAdapter(
-          child: _PageHeader(title: 'Analytics', subtitle: 'Platform breakdown'),
-        ),
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-            child: Row(
-              children: [
-                _MiniStatCard('$totalRestaurants', 'Restaurants', kPrimary),
-                const SizedBox(width: 10),
-                _MiniStatCard('$totalMenuItems', 'Menu Items', kBlue),
-                const SizedBox(width: 10),
-                _MiniStatCard(avgRating.toStringAsFixed(1), 'Avg Rating', kAmber),
-              ],
-            ),
-          ),
-        ),
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 28, 16, 14),
-            child: Text('By Category', style: _h2),
-          ),
-        ),
-        SliverList(
-          delegate: SliverChildBuilderDelegate(
-                (context, i) {
-              final entry = sorted[i];
-              final color = colors[i % colors.length];
-              final pct = entry.value / maxVal;
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: kSurface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: kBorder),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                  width: 10,
-                                  height: 10,
-                                  decoration: BoxDecoration(
-                                      color: color, shape: BoxShape.circle)),
-                              const SizedBox(width: 8),
-                              Text(entry.key, style: _h3),
-                            ],
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: color.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              '${entry.value} restaurant${entry.value > 1 ? 's' : ''}',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: color,
-                                  fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: LinearProgressIndicator(
-                          value: pct,
-                          minHeight: 8,
-                          backgroundColor: kBg,
-                          valueColor: AlwaysStoppedAnimation<Color>(color),
-                        ),
-                      ),
-                    ],
+            final totalRestaurants = restaurantsList.length;
+            final totalMenuItems = menuItemsList.length;
+            
+            double avgRating = 0;
+            if (restaurantsList.isNotEmpty) {
+              final sum = restaurantsList.fold<double>(0, (s, r) => s + ((r['rating'] ?? 0.0) as num).toDouble());
+              avgRating = sum / restaurantsList.length;
+            }
+
+            final catMap = <String, int>{};
+            for (final r in restaurantsList) {
+              final cat = (r['category'] ?? 'Other') as String;
+              catMap[cat] = (catMap[cat] ?? 0) + 1;
+            }
+            final sorted = catMap.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+            final maxVal = sorted.isEmpty ? 1 : sorted.first.value;
+
+            final colors = [
+              kPrimary, kBlue, kAmber, kRed, kGreen, kPurple,
+              const Color(0xFF06B6D4), const Color(0xFFF97316),
+            ];
+
+            return CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(
+                  child: _PageHeader(title: 'Analytics', subtitle: 'Platform breakdown'),
+                ),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+                    child: Row(
+                      children: [
+                        _MiniStatCard('$totalRestaurants', 'Restaurants', kPrimary),
+                        const SizedBox(width: 10),
+                        _MiniStatCard('$totalMenuItems', 'Menu Items', kBlue),
+                        const SizedBox(width: 10),
+                        _MiniStatCard(avgRating.toStringAsFixed(1), 'Avg Rating', kAmber),
+                      ],
+                    ),
                   ),
                 ),
-              );
-            },
-            childCount: sorted.length,
-          ),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 32)),
-      ],
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 28, 16, 14),
+                    child: Text('By Category', style: _h2),
+                  ),
+                ),
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, i) {
+                      final entry = sorted[i];
+                      final color = colors[i % colors.length];
+                      final pct = entry.value / maxVal;
+                      return Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: kSurface,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: kBorder),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Container(
+                                          width: 10,
+                                          height: 10,
+                                          decoration: BoxDecoration(
+                                              color: color, shape: BoxShape.circle)),
+                                      const SizedBox(width: 8),
+                                      Text(entry.key, style: _h3),
+                                    ],
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: color.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      '${entry.value} restaurant${entry.value > 1 ? 's' : ''}',
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: color,
+                                          fontWeight: FontWeight.w700),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: LinearProgressIndicator(
+                                  value: pct,
+                                  minHeight: 8,
+                                  backgroundColor: kBg,
+                                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    childCount: sorted.length,
+                  ),
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: 32)),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

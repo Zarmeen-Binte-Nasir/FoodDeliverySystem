@@ -18,9 +18,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoading = false;
-  
-  String _selectedRole = 'User'; // Default role for login
-  final List<String> _roles = ['User', 'Restaurant', 'Admin'];
 
   Future<void> _login() async {
     final email = _emailController.text.trim();
@@ -40,24 +37,18 @@ class _LoginScreenState extends State<LoginScreen> {
         password: password,
       );
 
-      // 2. Fetch User Role from Firestore to verify it matches selected role
+      // 2. Fetch User Role from Firestore (No need to select role on login page anymore)
       DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(userCredential.user!.uid).get();
 
       if (!userDoc.exists) {
         _showError('User record not found in database.');
-        await FirebaseAuth.instance.signOut(); // Log out if no record found
+        await FirebaseAuth.instance.signOut();
         return;
       }
 
       String dbRole = userDoc.get('role');
-      
-      if (dbRole != _selectedRole) {
-        _showError('❌ Access Denied: You are not registered as $_selectedRole');
-        await FirebaseAuth.instance.signOut(); // Log out if role mismatch
-        return;
-      }
 
-      // 3. Navigate based on role
+      // 3. Navigate based on role found in Database
       if (mounted) {
         if (dbRole == 'Admin') {
           Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AdminHomeScreen()));
@@ -76,60 +67,28 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _resetPassword() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      _showError('Please enter your email to reset password');
+      return;
+    }
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Password reset link sent to your email!'), backgroundColor: Colors.green, behavior: SnackBarBehavior.floating),
+        );
+      }
+    } catch (e) {
+      _showError('Failed to send reset link: $e');
+    }
+  }
+
   void _showError(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: Colors.redAccent, behavior: SnackBarBehavior.floating),
-    );
-  }
-
-  Widget _buildRoleCard(String role, IconData icon) {
-    bool isSelected = _selectedRole == role;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _selectedRole = role),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFFFF6B35) : Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: isSelected ? const Color(0xFFFF6B35) : Colors.grey.shade200,
-              width: 1.5,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: isSelected 
-                    ? const Color(0xFFFF6B35).withValues(alpha: 0.3)
-                    : Colors.black.withValues(alpha: 0.03),
-                blurRadius: 15,
-                offset: const Offset(0, 8),
-              )
-            ],
-          ),
-          child: Column(
-            children: [
-              Icon(
-                icon,
-                color: isSelected ? Colors.white : Colors.grey.shade600,
-                size: 28,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                role,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: isSelected ? Colors.white : Colors.grey.shade700,
-                  letterSpacing: 0.5,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -167,19 +126,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
 
-              const SizedBox(height: 32),
-
-              // Role Selection (Premium Row)
-              Row(
-                children: [
-                  _buildRoleCard('User', Icons.person_rounded),
-                  const SizedBox(width: 12),
-                  _buildRoleCard('Restaurant', Icons.restaurant_rounded),
-                  const SizedBox(width: 12),
-                  _buildRoleCard('Admin', Icons.admin_panel_settings_rounded),
-                ],
-              ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 40),
 
               const Text('Email Address', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
               const SizedBox(height: 8),
