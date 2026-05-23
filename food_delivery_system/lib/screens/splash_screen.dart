@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'login_screen.dart';
+import 'home_screen.dart';
+import 'package:food_delivery_system/admin/screens/admin_home_screen.dart';
+import 'package:food_delivery_system/restaurant/screens/restaurant_home_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -9,15 +14,59 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
+
   @override
   void initState() {
     super.initState();
-    Future.delayed(const Duration(seconds: 3), () {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-      );
-    });
+    _checkLoginStatus();
+  }
+
+  Future<void> _checkLoginStatus() async {
+    await Future.delayed(const Duration(seconds: 2));
+
+    User? user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      if (mounted) {
+        Navigator.pushReplacement(context,
+            MaterialPageRoute(builder: (_) => const LoginScreen()));
+      }
+    } else {
+      try {
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
+        if (!userDoc.exists) {
+          if (mounted) {
+            Navigator.pushReplacement(context,
+                MaterialPageRoute(builder: (_) => const LoginScreen()));
+          }
+          return;
+        }
+
+        String role = userDoc.get('role');
+
+        if (mounted) {
+          if (role == 'Admin') {
+            Navigator.pushReplacement(context,
+                MaterialPageRoute(builder: (_) => const AdminHomeScreen()));
+          } else if (role == 'Restaurant') {
+            Navigator.pushReplacement(context,
+                MaterialPageRoute(builder: (_) => const RestaurantHomeScreen()));
+          } else {
+            Navigator.pushReplacement(context,
+                MaterialPageRoute(builder: (_) => const HomeScreen()));
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          Navigator.pushReplacement(context,
+              MaterialPageRoute(builder: (_) => const LoginScreen()));
+        }
+      }
+    }
   }
 
   @override

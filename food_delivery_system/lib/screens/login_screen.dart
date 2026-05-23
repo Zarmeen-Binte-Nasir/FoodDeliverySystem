@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'signup_screen.dart';
 import 'home_screen.dart';
+import 'forgot_password_screen.dart';
 import 'package:food_delivery_system/admin/screens/admin_home_screen.dart';
 import 'package:food_delivery_system/restaurant/screens/restaurant_home_screen.dart';
 import 'dart:convert';
@@ -133,14 +134,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
     // Step 2 — Open the Google account picker popup
     // This is the screen where user picks their Google account
-   final GoogleSignInAccount? googleUser = await GoogleSignIn(
-  clientId: kIsWeb 
-      ? '542358620373-l7hfj3eqkdt5u1ogn78hoogfb1l47usv.apps.googleusercontent.com'
-      : null,
-  serverClientId: kIsWeb 
-      ? null 
-      : '542358620373-0122100sonj7e3ik0osrdjsbbukj62ki.apps.googleusercontent.com',
-).signIn();
+      final GoogleSignInAccount? googleUser = await GoogleSignIn(
+        clientId: kIsWeb 
+            ? '542358620373-l7hfj3eqkdt5u1ogn78hoogfb1l47usv.apps.googleusercontent.com'
+            : null,
+        serverClientId: kIsWeb 
+            ? null 
+            : '542358620373-0122100sonj7e3ik0osrdjsbbukj62ki.apps.googleusercontent.com',
+      ).signIn();
 
     // Step 3 — If user closed the popup without picking
     // googleUser will be null, so we stop here
@@ -375,7 +376,20 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 12),
               Align(
                 alignment: Alignment.centerRight,
-                child: TextButton(onPressed: () {}, child: const Text('Forgot Password?', style: TextStyle(color: Color(0xFFFF6B35), fontWeight: FontWeight.w600))),
+                child: TextButton(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ForgotPasswordScreen(),
+                    ),
+                  ),
+                  child: const Text('Forgot Password?',
+                    style: TextStyle(
+                      color: Color(0xFFFF6B35),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
               ),
 
               const SizedBox(height: 8),
@@ -411,7 +425,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 width: double.infinity,
                 height: 56,
                 child: OutlinedButton.icon(
-  onPressed: _isLoading ? null : _signInWithGoogle, // ← UPDATED
+  onPressed: _isLoading ? null : _signInWithGoogle, 
   icon: const Text('G',
       style: TextStyle(
           fontSize: 22,
