@@ -1,7 +1,7 @@
 buildscript {
     repositories {
         google()
-        materialCentral() // Note: if this fails, ensure it's spelled mavenCentral()
+        mavenCentral() // Note: if this fails, ensure it's spelled mavenCentral()
     }
     dependencies {
         // FIXED: Changed single quotes to double quotes for Kotlin DSL syntax

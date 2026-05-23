@@ -8,9 +8,6 @@ import 'home_screen.dart';
 import 'forgot_password_screen.dart';
 import 'package:food_delivery_system/admin/screens/admin_home_screen.dart';
 import 'package:food_delivery_system/restaurant/screens/restaurant_home_screen.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -29,59 +26,23 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      const clientId = 'Ov23liOaVo1SgJv4xXia';       // ← paste your GitHub Client ID here
-      const clientSecret = 'b0633117fe2c4852c7adfa251298705351dc83be'; // ← paste your GitHub Client Secret here
-      const callbackScheme = 'foodapp'; // ← must match AndroidManifest.xml scheme
+      GithubAuthProvider githubProvider = GithubAuthProvider();
+      githubProvider.addScope('read:user');
+      githubProvider.addScope('user:email');
 
-      // Step 1 — Build GitHub login URL and open browser
-      final githubAuthUrl = Uri.https('github.com', '/login/oauth/authorize', {
-        'client_id': clientId,
-        'scope': 'read:user user:email',
-        'redirect_uri': '$callbackScheme://callback',
-      });
+      UserCredential userCredential;
 
-      // Step 2 — Opens GitHub login page, waits for user to sign in
-      final result = await FlutterWebAuth2.authenticate(
-        url: githubAuthUrl.toString(),
-        callbackUrlScheme: callbackScheme,
-      );
-
-      // Step 3 — Extract the code GitHub sends back
-      final code = Uri.parse(result).queryParameters['code'];
-      if (code == null) {
-        _showError('GitHub sign in failed: no code received');
-        return;
+      if (kIsWeb) {
+        // Web — use popup
+        userCredential = await FirebaseAuth.instance
+            .signInWithPopup(githubProvider);
+      } else {
+        // Mobile — use provider
+        userCredential = await FirebaseAuth.instance
+            .signInWithProvider(githubProvider);
       }
 
-      // Step 4 — Exchange code for access token
-      final tokenResponse = await http.post(
-        Uri.parse('https://github.com/login/oauth/access_token'),
-        headers: {'Accept': 'application/json'},
-        body: {
-          'client_id': clientId,
-          'client_secret': clientSecret,
-          'code': code,
-          'redirect_uri': '$callbackScheme://callback',
-        },
-      );
-
-      final tokenJson = jsonDecode(tokenResponse.body);
-      final accessToken = tokenJson['access_token'];
-
-      if (accessToken == null) {
-        _showError('GitHub sign in failed: could not get access token');
-        return;
-      }
-
-      // Step 5 — Create Firebase credential using GitHub token
-      final AuthCredential credential =
-      GithubAuthProvider.credential(accessToken);
-
-      // Step 6 — Sign into Firebase
-      UserCredential userCredential =
-      await FirebaseAuth.instance.signInWithCredential(credential);
-
-      // Step 7 — Save to Firestore if new user
+      // Save to Firestore if new user
       bool isNewUser = userCredential.additionalUserInfo!.isNewUser;
       if (isNewUser) {
         await FirebaseFirestore.instance
@@ -95,7 +56,7 @@ class _LoginScreenState extends State<LoginScreen> {
         });
       }
 
-      // Step 8 — Fetch role and navigate
+      // Fetch role and navigate
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(userCredential.user!.uid)
@@ -438,6 +399,31 @@ class _LoginScreenState extends State<LoginScreen> {
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14))),
 ),
+              ),
+
+              const SizedBox(height: 16),
+
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: OutlinedButton.icon(
+                  onPressed: _isLoading ? null : _signInWithGitHub,
+                  icon: const Icon(
+                    Icons.code,
+                    color: Colors.black87,
+                    size: 22,
+                  ),
+                  label: const Text(
+                    'Continue with GitHub',
+                    style: TextStyle(fontSize: 16, color: Colors.black87),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.grey.shade300),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
               ),
 
               const SizedBox(height: 30),
