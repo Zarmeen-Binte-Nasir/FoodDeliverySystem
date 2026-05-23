@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -29,7 +30,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
     // Step 2 — Open the Google account picker popup
     // This is the screen where user picks their Google account
-    final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+   final GoogleSignInAccount? googleUser = await GoogleSignIn(
+  clientId: kIsWeb 
+      ? '542358620373-l7hfj3eqkdt5u1ogn78hoogfb1l47usv.apps.googleusercontent.com'
+      : null,
+  serverClientId: kIsWeb 
+      ? null 
+      : '542358620373-0122100sonj7e3ik0osrdjsbbukj62ki.apps.googleusercontent.com',
+).signIn();
 
     // Step 3 — If user closed the popup without picking
     // googleUser will be null, so we stop here
