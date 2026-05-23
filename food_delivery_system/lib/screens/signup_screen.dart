@@ -28,55 +28,90 @@ class _SignupScreenState extends State<SignupScreen> {
   final List<String> _roles = ['User', 'Restaurant', 'Admin'];
 
   Future<void> _signUp() async {
-    if (_nameController.text.isEmpty ||
-        _emailController.text.isEmpty ||
-        _passwordController.text.isEmpty) {
-      _showError('⚠️ Please fill all fields!');
-      return;
-    }
-    
-    if (_passwordController.text != _confirmPasswordController.text) {
-      _showError('❌ Passwords do not match!');
-      return;
-    }
-    
-    if (!_agreeToTerms) {
-      _showError('Please agree to terms first');
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    try {
-      // 1. Create User in Firebase Auth
-      UserCredential userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-      );
-
-      // 2. Save User Details and Role in Firestore
-      await FirebaseFirestore.instance.collection('users').doc(userCredential.user!.uid).set({
-        'uid': userCredential.user!.uid,
-        'name': _nameController.text.trim(),
-        'email': _emailController.text.trim(),
-        'phone': _phoneController.text.trim(),
-        'role': _selectedRole,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      // 3. Navigate back to Login
-      if (mounted) {
-        _showSuccess('Account created successfully! Please login.');
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
-      }
-    } on FirebaseAuthException catch (e) {
-      _showError(e.message ?? 'Signup failed');
-    } catch (e) {
-      _showError('An error occurred: $e');
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+  // Validation checks
+  if (_nameController.text.isEmpty ||
+      _emailController.text.isEmpty ||
+      _passwordController.text.isEmpty) {
+    _showError('⚠️ Please fill all fields!');
+    return;
   }
+
+  if (_passwordController.text != _confirmPasswordController.text) {
+    _showError('❌ Passwords do not match!');
+    return;
+  }
+
+  if (_passwordController.text.length < 8) {
+    _showError('❌ Password must be at least 8 characters!');
+    return;
+  }
+
+  if (!_agreeToTerms) {
+    _showError('Please agree to terms first');
+    return;
+  }
+
+  setState(() => _isLoading = true);
+
+  try {
+    // Step 1 — Create account in Firebase Auth
+    UserCredential userCredential = await FirebaseAuth.instance
+        .createUserWithEmailAndPassword(
+      email:    _emailController.text.trim(),
+      password: _passwordController.text.trim(),
+    );
+
+    // Step 2 — Update display name in Firebase Auth
+    await userCredential.user!.updateDisplayName(
+      _nameController.text.trim(),
+    );
+
+    // Step 3 — Save all details to Firestore users collection
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(userCredential.user!.uid)
+        .set({
+      'uid':          userCredential.user!.uid,
+      'displayName':  _nameController.text.trim(),
+      'name':         _nameController.text.trim(),
+      'email':        _emailController.text.trim(),
+      'phoneNumber':  _phoneController.text.trim(),
+      'photoURL':     '',
+      'authProvider': 'email',
+      'role':         _selectedRole,
+      'createdAt':    FieldValue.serverTimestamp(),
+      'lastLoginAt':  FieldValue.serverTimestamp(),
+    });
+
+    // Step 4 — Send email verification
+    await userCredential.user!.sendEmailVerification();
+
+    // Step 5 — Go back to login
+    if (mounted) {
+      _showSuccess('✅ Account created! Please verify your email.');
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    }
+
+  } on FirebaseAuthException catch (e) {
+    // Show specific error messages
+    if (e.code == 'email-already-in-use') {
+      _showError('❌ This email is already registered!');
+    } else if (e.code == 'weak-password') {
+      _showError('❌ Password is too weak!');
+    } else if (e.code == 'invalid-email') {
+      _showError('❌ Invalid email format!');
+    } else {
+      _showError(e.message ?? 'Signup failed');
+    }
+  } catch (e) {
+    _showError('An error occurred: $e');
+  } finally {
+    if (mounted) setState(() => _isLoading = false);
+  }
+}
 
   void _showSuccess(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
