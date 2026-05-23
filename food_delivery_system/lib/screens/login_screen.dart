@@ -7,6 +7,9 @@ import 'signup_screen.dart';
 import 'home_screen.dart';
 import 'package:food_delivery_system/admin/screens/admin_home_screen.dart';
 import 'package:food_delivery_system/restaurant/screens/restaurant_home_screen.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -20,6 +23,106 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoading = false;
+
+  Future<void> _signInWithGitHub() async {
+    setState(() => _isLoading = true);
+
+    try {
+      const clientId = 'Ov23liOaVo1SgJv4xXia';       // ← paste your GitHub Client ID here
+      const clientSecret = 'b0633117fe2c4852c7adfa251298705351dc83be'; // ← paste your GitHub Client Secret here
+      const callbackScheme = 'foodapp'; // ← must match AndroidManifest.xml scheme
+
+      // Step 1 — Build GitHub login URL and open browser
+      final githubAuthUrl = Uri.https('github.com', '/login/oauth/authorize', {
+        'client_id': clientId,
+        'scope': 'read:user user:email',
+        'redirect_uri': '$callbackScheme://callback',
+      });
+
+      // Step 2 — Opens GitHub login page, waits for user to sign in
+      final result = await FlutterWebAuth2.authenticate(
+        url: githubAuthUrl.toString(),
+        callbackUrlScheme: callbackScheme,
+      );
+
+      // Step 3 — Extract the code GitHub sends back
+      final code = Uri.parse(result).queryParameters['code'];
+      if (code == null) {
+        _showError('GitHub sign in failed: no code received');
+        return;
+      }
+
+      // Step 4 — Exchange code for access token
+      final tokenResponse = await http.post(
+        Uri.parse('https://github.com/login/oauth/access_token'),
+        headers: {'Accept': 'application/json'},
+        body: {
+          'client_id': clientId,
+          'client_secret': clientSecret,
+          'code': code,
+          'redirect_uri': '$callbackScheme://callback',
+        },
+      );
+
+      final tokenJson = jsonDecode(tokenResponse.body);
+      final accessToken = tokenJson['access_token'];
+
+      if (accessToken == null) {
+        _showError('GitHub sign in failed: could not get access token');
+        return;
+      }
+
+      // Step 5 — Create Firebase credential using GitHub token
+      final AuthCredential credential =
+      GithubAuthProvider.credential(accessToken);
+
+      // Step 6 — Sign into Firebase
+      UserCredential userCredential =
+      await FirebaseAuth.instance.signInWithCredential(credential);
+
+      // Step 7 — Save to Firestore if new user
+      bool isNewUser = userCredential.additionalUserInfo!.isNewUser;
+      if (isNewUser) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCredential.user!.uid)
+            .set({
+          'name':      userCredential.user!.displayName ?? '',
+          'email':     userCredential.user!.email ?? '',
+          'role':      'Customer',
+          'createdAt': Timestamp.now(),
+        });
+      }
+
+      // Step 8 — Fetch role and navigate
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCredential.user!.uid)
+          .get();
+
+      String dbRole = userDoc.get('role');
+
+      if (mounted) {
+        if (dbRole == 'Admin') {
+          Navigator.pushReplacement(context,
+              MaterialPageRoute(builder: (_) => const AdminHomeScreen()));
+        } else if (dbRole == 'Restaurant') {
+          Navigator.pushReplacement(context,
+              MaterialPageRoute(builder: (_) => const RestaurantHomeScreen()));
+        } else {
+          Navigator.pushReplacement(context,
+              MaterialPageRoute(builder: (_) => const HomeScreen()));
+        }
+      }
+
+    } on FirebaseAuthException catch (e) {
+      _showError(e.message ?? 'GitHub sign in failed');
+    } catch (e) {
+      _showError('GitHub sign in failed: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
   Future<void> _signInWithGoogle() async {
 
