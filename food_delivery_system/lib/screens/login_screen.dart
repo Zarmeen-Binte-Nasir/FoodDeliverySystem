@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'signup_screen.dart';
@@ -18,6 +19,100 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoading = false;
+
+  Future<void> _signInWithGoogle() async {
+
+  // Step 1 — show loading spinner
+  setState(() => _isLoading = true);
+
+  try {
+
+    // Step 2 — Open the Google account picker popup
+    // This is the screen where user picks their Google account
+    final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+
+    // Step 3 — If user closed the popup without picking
+    // googleUser will be null, so we stop here
+    if (googleUser == null) {
+      setState(() => _isLoading = false);
+      return; // user cancelled, do nothing
+    }
+
+    // Step 4 — Get the security tokens from Google
+    // Think of these like a temporary pass Google gives us
+    // to prove the user really signed in with Google
+    final GoogleSignInAuthentication googleAuth =
+        await googleUser.authentication;
+
+    // Step 5 — Convert Google tokens into Firebase credential
+    // Firebase needs its own format of the proof
+    final AuthCredential credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken:     googleAuth.idToken,
+    );
+
+    // Step 6 — Sign into Firebase using the credential
+    // This is like showing the proof to Firebase
+    UserCredential userCredential =
+        await FirebaseAuth.instance.signInWithCredential(credential);
+
+    // Step 7 — Check if this is a NEW user or existing user
+    // isNewUser = true  means first time signing in with Google
+    // isNewUser = false means they signed in with Google before
+    bool isNewUser = userCredential.additionalUserInfo!.isNewUser;
+
+    if (isNewUser) {
+      // Step 8 — New user: save their info to Firestore
+      // because we need their role in the database
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCredential.user!.uid)
+          .set({
+        'name':      userCredential.user!.displayName ?? '',
+        // displayName comes from their Google account name
+        'email':     userCredential.user!.email ?? '',
+        'role':      'Customer', // default role for Google users
+        'createdAt': Timestamp.now(),
+      });
+    }
+
+    // Step 9 — Get their role from Firestore
+    // same as your regular login does
+    DocumentSnapshot userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(userCredential.user!.uid)
+        .get();
+
+    String dbRole = userDoc.get('role');
+
+    // Step 10 — Navigate based on role
+    if (mounted) {
+      if (dbRole == 'Admin') {
+        Navigator.pushReplacement(context,
+            MaterialPageRoute(builder: (_) => const AdminHomeScreen()));
+      } else if (dbRole == 'Restaurant') {
+        Navigator.pushReplacement(context,
+            MaterialPageRoute(builder: (_) => const RestaurantHomeScreen()));
+      } else {
+        Navigator.pushReplacement(context,
+            MaterialPageRoute(builder: (_) => const HomeScreen()));
+      }
+    }
+
+  } on FirebaseAuthException catch (e) {
+    // Firebase specific error
+    _showError(e.message ?? 'Google sign in failed');
+
+  } catch (e) {
+    // Any other error
+    _showError('Google sign in failed: $e');
+
+  } finally {
+    // Always turn off spinner at the end
+    // whether it worked or failed
+    if (mounted) setState(() => _isLoading = false);
+  }
+}
 
   Future<void> _login() async {
     final email = _emailController.text.trim();
@@ -205,11 +300,19 @@ class _LoginScreenState extends State<LoginScreen> {
                 width: double.infinity,
                 height: 56,
                 child: OutlinedButton.icon(
-                  onPressed: () {},
-                  icon: const Text('G', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFFFF6B35))),
-                  label: const Text('Continue with Google', style: TextStyle(fontSize: 16, color: Colors.black87)),
-                  style: OutlinedButton.styleFrom(side: BorderSide(color: Colors.grey.shade300), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
-                ),
+  onPressed: _isLoading ? null : _signInWithGoogle, // ← UPDATED
+  icon: const Text('G',
+      style: TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.bold,
+          color: Color(0xFFFF6B35))),
+  label: const Text('Continue with Google',
+      style: TextStyle(fontSize: 16, color: Colors.black87)),
+  style: OutlinedButton.styleFrom(
+      side: BorderSide(color: Colors.grey.shade300),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14))),
+),
               ),
 
               const SizedBox(height: 30),
