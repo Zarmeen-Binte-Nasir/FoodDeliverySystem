@@ -1,14 +1,7 @@
 import 'package:flutter/material.dart';
-<<<<<<< HEAD
-import 'package:food_delivery_system/screens/common/splash_screen.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'firebase_options.dart';
-import 'screens/common/splash_screen.dart';
-=======
 import 'screens/splash_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
->>>>>>> 8d61d677478ac338835568e82a6be84b75d9a646
 
 
 void main() async {
